@@ -1,4 +1,4 @@
-module github.com/qiwentaidi/request
+module github.com/qiwentaidi/clients
 
 go 1.23.0
 
