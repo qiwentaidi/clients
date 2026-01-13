@@ -73,7 +73,14 @@ func NewRestyClient(interfaceIp net.IP, followRedirect bool) *resty.Client {
 	if followRedirect {
 		client.SetRedirectPolicy(resty.FlexibleRedirectPolicy(10))
 	} else {
-		client.SetRedirectPolicy(resty.NoRedirectPolicy())
+		// fixed: 不跟随重定向，会直接报错
+		client.SetRedirectPolicy(resty.RedirectPolicyFunc(func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 1 {
+				// 停止继续跳转，但不报错
+				return http.ErrUseLastResponse
+			}
+			return nil
+		}))
 	}
 	return client
 }
