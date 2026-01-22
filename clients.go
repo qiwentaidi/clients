@@ -58,7 +58,9 @@ func NewRestyClient(interfaceIp net.IP, followRedirect bool) *resty.Client {
 		TLSClientConfig:       TlsConfig,
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           dialer.DialContext,
-		MaxIdleConns:          100,
+		MaxIdleConns:          100,              // 全局最大空闲连接数
+		MaxIdleConnsPerHost:   10,               // 每个主机最大空闲连接数（默认2太小）
+		MaxConnsPerHost:       50,               // 每个主机最大连接数，防止单主机占用过多资源
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
