@@ -5,10 +5,12 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -52,15 +54,24 @@ func NewRestyClient(interfaceIp net.IP, followRedirect bool) *resty.Client {
 	}
 	if interfaceIp != nil {
 		dialer.LocalAddr = &net.TCPAddr{IP: interfaceIp}
+	} else {
+		envIp, err := GetInterfaceIPFromEnv()
+		if err != nil {
+			// 这里不要 panic，记录日志即可
+			log.Printf("[network] 使用默认路由，原因: %v\n", err)
+		}
+		if envIp != nil {
+			dialer.LocalAddr = &net.TCPAddr{IP: envIp}
+		}
 	}
 
 	transport := &http.Transport{
 		TLSClientConfig:       TlsConfig,
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           dialer.DialContext,
-		MaxIdleConns:          100,              // 全局最大空闲连接数
-		MaxIdleConnsPerHost:   10,               // 每个主机最大空闲连接数（默认2太小）
-		MaxConnsPerHost:       50,               // 每个主机最大连接数，防止单主机占用过多资源
+		MaxIdleConns:          100, // 全局最大空闲连接数
+		MaxIdleConnsPerHost:   10,  // 每个主机最大空闲连接数（默认2太小）
+		MaxConnsPerHost:       50,  // 每个主机最大连接数，防止单主机占用过多资源
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
@@ -69,8 +80,7 @@ func NewRestyClient(interfaceIp net.IP, followRedirect bool) *resty.Client {
 	client := resty.New().
 		SetTransport(transport).
 		SetTimeout(10*time.Second).
-		SetHeader("User-Agent", RandomUA()).
-		SetHeader("Connection", "close")
+		SetHeader("User-Agent", RandomUA())
 	// 设置重定向规则
 	if followRedirect {
 		client.SetRedirectPolicy(resty.FlexibleRedirectPolicy(10))
@@ -154,6 +164,52 @@ func DoRequest(method, url string, headers map[string]string, body io.Reader, ti
 // SimpleGet performs a simple GET request to the specified URL using the provided resty.Client.
 func SimpleGet(url string, client *resty.Client) (*resty.Response, error) {
 	return DoRequest("GET", url, nil, nil, 10, client)
+}
+
+// GetInterfaceIPFromEnv retrieves the local interface IP based on the DEFAULT_NETWORK environment variable.
+func GetInterfaceIPFromEnv() (net.IP, error) {
+	netName := strings.TrimSpace(os.Getenv("DEFAULT_NETWORK"))
+
+	// auto / 空 → 不绑定
+	if netName == "" || netName == "auto" {
+		return nil, nil
+	}
+
+	// 直接是 IP 的情况
+	if ip := net.ParseIP(netName); ip != nil {
+		return ip, nil
+	}
+
+	// 按网卡名查
+	iface, err := net.InterfaceByName(netName)
+	if err != nil {
+		return nil, fmt.Errorf("未找到网卡 %s: %w", netName, err)
+	}
+
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return nil, fmt.Errorf("读取网卡地址失败 %s: %w", netName, err)
+	}
+
+	// 优先选择 IPv4
+	for _, addr := range addrs {
+		var ip net.IP
+		switch v := addr.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip == nil {
+			continue
+		}
+		ip = ip.To4()
+		if ip != nil && !ip.IsLoopback() {
+			return ip, nil
+		}
+	}
+
+	return nil, fmt.Errorf("网卡 %s 没有可用 IPv4 地址", netName)
 }
 
 // regTitle is a regular expression to extract the <title> tag content from HTML.
